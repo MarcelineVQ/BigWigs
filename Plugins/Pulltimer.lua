@@ -26,6 +26,8 @@ local timer = {
 local syncName = {
 	pulltimer = "PulltimerSync",
 	stoppulltimer = "PulltimerStopSync",
+	broadcasttimer = "PulltimerBroadcastSync",
+	reqtimer = "PulltimerReqSync",
 }
 local icon = {
 	pulltimer = "RACIAL_ORC_BERSERKERSTRENGTH",
@@ -84,7 +86,7 @@ L:RegisterTranslations("esES", function() return {
 -----------------------------------------------------------------------
 
 BigWigsPulltimer = BigWigs:NewModule(L["Pull Timer"], "AceConsole-2.0")
-BigWigsPulltimer.revision = 20002
+BigWigsPulltimer.revision = 20003
 BigWigsPulltimer.defaultDB = {
 	enable = true,
 }
@@ -139,12 +141,15 @@ function BigWigsPulltimer:OnEnable()
 	self:RegisterEvent("BigWigs_PullCommand")
 	self:RegisterEvent("BigWigs_RecvSync")
 	self:ThrottleSync(0.5, syncName.pulltimer)
-
+	self:ThrottleSync(0.5, syncName.broadcasttimer)
 
 	if SlashCmdList then
 		SlashCmdList["BWPT_SHORTHAND"] = BWPT
 		setglobal("SLASH_BWPT_SHORTHAND1", "/"..L["pull"])
 	end
+
+	-- small delay or Sync will try too early
+	self:DelayedSync(1, syncName.reqtimer)
 end
 
 function BigWigsPulltimer:OnSetup()
@@ -168,37 +173,49 @@ function BigWigsPulltimer:BigWigs_RecvSync(sync, rest, nick)
 		self:Message(string.format(L["pullstop_message"], nick), "Attention", false)
 		PlaySound("igQuestFailed")
 	end
+	if sync == syncName.broadcasttimer then
+		self:BigWigs_Pulltimer(rest, nick, true)
+	end
+	if sync == syncName.reqtimer then
+		local _, time, elapsed, running = self:BarStatus(L["Pull"])
+		if ((IsRaidLeader() or IsRaidOfficer()) and running) then
+			local dur = time - elapsed
+			if dur > 0 then
+				self:DoPull(dur, true)
+			end
+		end
+	end
 end
 
 -----------------------------------------------------------------------
 --      Utility
 -----------------------------------------------------------------------
 
-function BigWigsPulltimer:BigWigs_PullCommand(msg)
-	if (IsRaidLeader() or IsRaidOfficer()) then
-		if tonumber(msg) then
-			timer.pulltimer = tonumber(msg)
-		else
+function BigWigsPulltimer:DoPull(dur,broadcast)
+	timer.pulltimer = dur
+	if timer.pulltimer == 0 then
+		-- stop pull timer if it is already running
+		local registered, time, elapsed, running = self:BarStatus(L["Pull"])
+		if running then
 			self:Sync(syncName.stoppulltimer)
 			return
+			-- otherwise start a 6s pull timer
+		else
+			timer.pulltimer = 6
 		end
-
-		if  timer.pulltimer == 0 then
-			-- stop pull timer if it is already running
-			local registered, time, elapsed, running = self:BarStatus(L["Pull"])
-			if running then
-				self:Sync(syncName.stoppulltimer)
-				return
-				-- otherwise start a 6s pull timer
-			else
-				timer.pulltimer = 6
-			end
-		-- elseif ((timer.pulltimer > 63) or (timer.pulltimer < 1))  then
-		elseif ((timer.pulltimer < 1))  then
-			return
-		end
-
+	elseif (timer.pulltimer < 1)  then
+		return
+	end
+	if broadcast then
+		self:Sync(syncName.broadcasttimer.." "..timer.pulltimer)
+	else
 		self:Sync(syncName.pulltimer.." "..timer.pulltimer)
+	end
+end
+
+function BigWigsPulltimer:BigWigs_PullCommand(msg)
+	if (IsRaidLeader() or IsRaidOfficer()) then
+		BigWigsPulltimer:DoPull(tonumber(msg),false)
 	else
 		self:Print(L["You have to be the raid leader or an assistant"])
 	end
@@ -219,7 +236,11 @@ function BigWigsPulltimer:BigWigs_StopPulltimer()
 	self:CancelDelayedMessage(L["pull5_message"])
 end
 
-function BigWigsPulltimer:BigWigs_Pulltimer(duration, requester)
+function BigWigsPulltimer:BigWigs_Pulltimer(duration, requester, soft)
+	local _,_,_,running = self:BarStatus(L["Pull"])
+	-- skip making a new timer if one exists and this is a soft call
+	if soft and running then return end
+
 	--cancel events from an ongoing pull timer in case a new one is initiated
 	self:BigWigs_StopPulltimer()
 
@@ -229,8 +250,11 @@ function BigWigsPulltimer:BigWigs_Pulltimer(duration, requester)
 		return
 	end
 
-	self:Message(string.format(L["pullstart_message"], timer.pulltimer, requester), "Attention", false, "RaidAlert")
+
 	self:Bar(L["Pull"], timer.pulltimer, icon.pulltimer)
+	if not soft or not running then
+		self:Message(string.format(L["pullstart_message"], timer.pulltimer, requester), "Attention", false, "RaidAlert")
+	end
 
 	--self:DelayedSound(timer.pulltimer, "Warning")
 	self:DelayedMessage(timer.pulltimer, L["pull0_message"], "Important", false, "Warning")
