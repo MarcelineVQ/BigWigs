@@ -10,6 +10,7 @@ Allows you to start a pull timer.
 Usage:
 /pull 				starts a 6s pull timer
 /pull <duration>	starts a custom pull timer. "/pull 7" starts a 7s pull timer.
+/pull <shorthand_duration>	starts a custom pull timer. "/pull 12m13s" starts a 12m13s pull timer.
 
 --]]
 
@@ -111,11 +112,19 @@ BigWigsPulltimer.consoleOptions = {
 --      Initialization
 -----------------------------------------------------------------------
 -- For easy use in macros.
-local function BWPT(seconds)
-	if tonumber(seconds) then
-		seconds = tonumber(seconds)
+local function BWPT(time)
+	local seconds
+	if tonumber(time) then
+		seconds = tonumber(time)
 	else
-		seconds = 0
+		local _, _, minutes = string.find(time, "(%d+)m")
+		local _, _, seconds = string.find(time, "(%d+)s")
+
+		minutes = tonumber(minutes) or 0
+		seconds = tonumber(seconds) or 0
+
+		-- cap for display purposes
+		seconds = min(minutes * 60 + seconds, 3600)
 	end
 	BigWigsPulltimer:BigWigs_PullCommand(seconds)
 end
